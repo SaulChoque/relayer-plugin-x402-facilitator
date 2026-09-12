@@ -8,9 +8,10 @@ OpenZeppelin Relayer plugin that implements the x402 facilitator API so you can 
 
 ## What you get
 
-- x402 facilitator API implemented as a Relayer plugin (Stellar support today)
+- x402 facilitator API implemented as a Relayer plugin (Stellar and EVM support)
 - Uses your Relayer accounts/signers to verify and settle payments
 - Supports multiple networks via config, including allowed assets per network
+- EVM networks use the EIP-3009 (`transferWithAuthorization`) "exact" scheme — no gas held by the payer, no on-chain approval step
 - Optional channel service integration for Stellar throughput
 
 ## Prerequisites
@@ -80,12 +81,75 @@ export { handler } from "@openzeppelin/relayer-plugin-x402-facilitator";
 
 Each object in `config.networks`:
 
-- `network`: x402 network identifier (e.g., `stellar:testnet`)
-- `type`: `"stellar"` (current support)
+- `network`: x402 network identifier (e.g., `stellar:testnet`, or `eip155:<chainId>` for EVM)
+- `type`: `"stellar"` or `"evm"`
 - `relayer_id`: ID of the Relayer account to use for this network
-- `assets`: list of allowed assets (issuer addresses for Stellar)
-- `channel_service_api_url` / `channel_service_api_key` (optional): enable channel service acceleration for Stellar
-- `channel_service_fund_relayer_address` (optional): on-chain signer address of the channel service fund relayer, used in `/supported` response and security checks
+- `assets`: list of allowed assets (issuer addresses for Stellar, ERC-20 token contract addresses for EVM)
+- `channel_service_api_url` / `channel_service_api_key` (optional, Stellar only): enable channel service acceleration
+- `channel_service_fund_relayer_address` (optional, Stellar only): on-chain signer address of the channel service fund relayer, used in `/supported` response and security checks
+
+### EVM networks (EIP-3009 "exact" scheme)
+
+EVM networks use `type: "evm"` and are identified with the CAIP-2 `eip155:<chainId>` format. The asset must be an EIP-3009-compliant token (e.g., USDC) — the plugin calls `transferWithAuthorization` on it directly, so no on-chain approval step or gas from the payer is required.
+
+Example: Avalanche Fuji testnet (chain id `43113`) and HSK (HashKey Chain) testnet (chain id `133`):
+
+```json
+{
+  "config": {
+    "networks": [
+      {
+        "network": "eip155:43113",
+        "type": "evm",
+        "relayer_id": "avalanche-fuji-relayer",
+        "assets": ["0x5425890298aed601595a70AB815c96711a31Bc65"]
+      },
+      {
+        "network": "eip155:133",
+        "type": "evm",
+        "relayer_id": "hsk-testnet-relayer",
+        "assets": ["0xYourEip3009TokenAddress"]
+      }
+    ]
+  }
+}
+```
+
+`paymentRequirements.extra` must include the token's EIP-712 domain `name` and `version` (read them from the token contract's `name()`/`version()` functions, or a block explorer) so the facilitator can reconstruct the signed message and verify signatures:
+
+```json
+{
+  "scheme": "exact",
+  "network": "eip155:43113",
+  "amount": "1000",
+  "payTo": "0xYourReceivingAddress",
+  "maxTimeoutSeconds": 60,
+  "asset": "0x5425890298aed601595a70AB815c96711a31Bc65",
+  "extra": {
+    "areFeesSponsored": true,
+    "name": "USD Coin",
+    "version": "2"
+  }
+}
+```
+
+The `payload` for EVM `verify`/`settle` requests carries the EIP-3009 authorization instead of a signed transaction:
+
+```json
+{
+  "signature": "0x...",
+  "authorization": {
+    "from": "0xPayerAddress",
+    "to": "0xYourReceivingAddress",
+    "value": "1000",
+    "validAfter": "1740672089",
+    "validBefore": "1740672154",
+    "nonce": "0xf3746613c2d920b5fdabc0856f2aeb2d4f88ee6037b8cc5d04a71a4462f1348"
+  }
+}
+```
+
+`verify` cross-checks the relayer's own RPC connection is on the expected chain (`eth_chainId`), recovers the EIP-712 signature, checks the `validAfter`/`validBefore` window against the chain's own clock, checks `authorizationState` on-chain to reject replayed nonces, and re-simulates the call before `settle` broadcasts it.
 
 ### Exposed routes
 

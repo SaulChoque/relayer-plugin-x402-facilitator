@@ -25,6 +25,7 @@ import {
   settle as handleSettleStellar,
   verify as handleVerifyStellar,
 } from "./stellar";
+import { settle as handleSettleEvm, verify as handleVerifyEvm } from "./evm";
 
 import { getNetworkConfigByNetwork } from "./utils";
 import { validateVerifyRequest, validateSettleRequest } from "./stellar/utils";
@@ -101,6 +102,8 @@ async function handleVerify(
   switch (networkConfig.type) {
     case "stellar":
       return handleVerifyStellar(params, api, networkConfig);
+    case "evm":
+      return handleVerifyEvm(params, api, networkConfig);
     default:
       return { isValid: false, invalidReason: "unsupported_network" };
   }
@@ -139,6 +142,8 @@ async function handleSettle(
   switch (networkConfig.type) {
     case "stellar":
       return handleSettleStellar(params, api, networkConfig);
+    case "evm":
+      return handleSettleEvm(params, api, networkConfig);
     default:
       return {
         success: false,
