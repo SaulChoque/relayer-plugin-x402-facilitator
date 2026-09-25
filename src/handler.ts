@@ -25,9 +25,10 @@ import {
   settle as handleSettleStellar,
   verify as handleVerifyStellar,
 } from "./stellar";
+import { settle as handleSettleEvm, verify as handleVerifyEvm } from "./evm";
 
 import { getNetworkConfigByNetwork } from "./utils";
-import { validateVerifyRequest, validateSettleRequest } from "./stellar/utils";
+import { validateVerifyRequest, validateSettleRequest } from "./validation";
 
 export async function handler(context: PluginContext) {
   const { route, params, api, config } = context;
@@ -101,6 +102,8 @@ async function handleVerify(
   switch (networkConfig.type) {
     case "stellar":
       return handleVerifyStellar(params, api, networkConfig);
+    case "evm":
+      return handleVerifyEvm(params, api, networkConfig);
     default:
       return { isValid: false, invalidReason: "unsupported_network" };
   }
@@ -139,6 +142,8 @@ async function handleSettle(
   switch (networkConfig.type) {
     case "stellar":
       return handleSettleStellar(params, api, networkConfig);
+    case "evm":
+      return handleSettleEvm(params, api, networkConfig);
     default:
       return {
         success: false,
@@ -176,7 +181,12 @@ async function handleSupported(
         }
       }
 
-      const extra = { areFeesSponsored: true };
+      // Stellar advertises fee sponsorship; EVM (EIP-3009) is always
+      // facilitator-paid and needs no extra fields in the supported kind.
+      const extra =
+        networkConfig.type === "stellar"
+          ? { areFeesSponsored: true }
+          : undefined;
 
       return {
         networkConfig,
@@ -184,7 +194,7 @@ async function handleSupported(
           x402Version: 2 as const,
           scheme: "exact" as const,
           network: networkConfig.network,
-          extra,
+          ...(extra ? { extra } : {}),
         },
         relayerAddress,
       };

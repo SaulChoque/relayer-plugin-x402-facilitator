@@ -8,7 +8,7 @@ OpenZeppelin Relayer plugin that implements the x402 facilitator API so you can 
 
 ## What you get
 
-- x402 facilitator API implemented as a Relayer plugin (Stellar support today)
+- x402 facilitator API implemented as a Relayer plugin (Stellar and EVM `exact` scheme)
 - Uses your Relayer accounts/signers to verify and settle payments
 - Supports multiple networks via config, including allowed assets per network
 - Optional channel service integration for Stellar throughput
@@ -81,11 +81,12 @@ export { handler } from "@openzeppelin/relayer-plugin-x402-facilitator";
 Each object in `config.networks`:
 
 - `network`: x402 network identifier (e.g., `stellar:testnet`)
-- `type`: `"stellar"` (current support)
+- `type`: `"stellar"` or `"evm"`
 - `relayer_id`: ID of the Relayer account to use for this network
-- `assets`: list of allowed assets (issuer addresses for Stellar)
+- `assets`: list of allowed assets (token contract addresses: `C...` for Stellar, `0x...` EIP-3009 tokens for EVM)
 - `channel_service_api_url` / `channel_service_api_key` (optional): enable channel service acceleration for Stellar
 - `channel_service_fund_relayer_address` (optional): on-chain signer address of the channel service fund relayer, used in `/supported` response and security checks
+- `evm_speed` (optional, EVM only): relayer speed for settlement transactions: `fastest`, `fast` (default), `average` or `safeLow`
 
 ### Exposed routes
 
@@ -124,6 +125,47 @@ The `/supported` endpoint returns data in the following v2 format:
   "extensions": []
 }
 ```
+
+## EVM networks (x402 `exact` scheme, EIP-3009)
+
+The plugin settles EVM payments with EIP-3009 `transferWithAuthorization` (e.g. USDC). The client signs an EIP-712 authorization; the relayer submits it and pays the gas.
+
+Any EVM chain that your Relayer serves works. Identify it with its CAIP-2 id and point `relayer_id` at an EVM relayer on that chain (the plugin checks the relayer's `eth_chainId`):
+
+| Chain             | `network`        | Relayer network name                         | USDC (EIP-3009)                              |
+| ----------------- | ---------------- | -------------------------------------------- | -------------------------------------------- |
+| Base              | `eip155:8453`    | `base`                                       | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| Base Sepolia      | `eip155:84532`   | `base-sepolia`                               | `0x036CbD53842c5426634e7929541eC2318f3dCF7e` |
+| Arbitrum One      | `eip155:42161`   | `arbitrum-one`                               | `0xaf88d065e77c8cC2239327C5EDb3A432268e5831` |
+| Avalanche C-Chain | `eip155:43114`   | `avalanche`                                  | `0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E` |
+| Avalanche Fuji    | `eip155:43113`   | `avalanche-fuji`                             | `0x5425890298aed601595a70AB815c96711a31Bc65` |
+| Arc Testnet       | `eip155:5042002` | custom network (not in the Relayer defaults) | token address from Circle's Arc docs         |
+
+Relayer network names are the ones in the Relayer's `config/networks`; chains that are not there (such as Arc) need a custom network entry. Always double-check token addresses against the issuer's documentation.
+
+```json
+{
+  "network": "eip155:84532",
+  "type": "evm",
+  "relayer_id": "base-sepolia-relayer",
+  "assets": ["0x036CbD53842c5426634e7929541eC2318f3dCF7e"],
+  "evm_speed": "fast"
+}
+```
+
+Payment requirements must carry the token's EIP-712 domain in `extra` (x402 EVM servers do this automatically):
+
+```json
+{ "extra": { "name": "USDC", "version": "2" } }
+```
+
+**Verify** checks, in order: x402 version and scheme, CAIP-2 network, allowed asset, payload shape, EIP-712 domain, that the relayer is an EVM relayer on the same chain, recipient, exact amount, that the payer is not the relayer, the `validAfter`/`validBefore` window (at least 6 seconds left), the signature, the payer balance, that the nonce is unused, and a `transferWithAuthorization` simulation (`eth_call`). Contract wallets whose signature is not a plain ECDSA signature are validated on-chain (ERC-1271) by that simulation.
+
+**Settle** re-runs verify, estimates gas (+20%), submits the call through `relayer.sendTransaction` with `valid_until` set to the authorization's `validBefore`, and waits until the transaction is `mined` or `confirmed`.
+
+Not supported yet: the Permit2 and ERC-7710 asset transfer methods.
+
+To run an end-to-end check against a running Relayer (e.g. a local anvil node with an EIP-3009 token), use `scripts/e2e-evm.ts`; see the header of that file for arguments.
 
 ## Using with x402 packages (e.g., x402-express)
 

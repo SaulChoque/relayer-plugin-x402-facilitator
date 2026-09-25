@@ -57,8 +57,9 @@ export type PaymentRequirements = {
   payTo: string; // account address or constant (e.g., "merchant")
   maxTimeoutSeconds: number;
   asset: string; // account or asset address, or ISO 4217 currency code
+  // Stellar requires `areFeesSponsored`; EVM uses the EIP-712 domain (`name`, `version`)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  extra: { areFeesSponsored: boolean } & Record<string, any>;
+  extra: { areFeesSponsored?: boolean } & Record<string, any>;
 };
 
 // PaymentRequired (top-level response in v2)
@@ -138,6 +139,8 @@ export type NetworkConfig = {
   channel_service_fund_relayer_id?: string;
   channel_service_fund_relayer_address?: string;
   maxTransactionFeeStroops?: string;
+  /** EVM only: relayer speed used for settlement transactions (default "fast") */
+  evm_speed?: "fastest" | "fast" | "average" | "safeLow";
 };
 
 export type ConfigNetwork = "stellar" | "evm" | "solana";
