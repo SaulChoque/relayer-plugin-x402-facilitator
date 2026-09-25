@@ -23,7 +23,7 @@ OpenZeppelin Relayer plugin that implements the x402 facilitator API so you can 
 
 ```bash
 # inside your relayer repo
-pnpm add @openzeppelin/relayer-plugin-x402-facilitator
+pnpm add @rodacio/relayer-plugin-x402-facilitator
 ```
 
 For local development of the plugin itself:
@@ -42,7 +42,7 @@ plugins/x402/index.ts
 ```
 
 ```ts
-export { handler } from "@openzeppelin/relayer-plugin-x402-facilitator";
+export { handler } from "@rodacio/relayer-plugin-x402-facilitator";
 ```
 
 2. Add the plugin entry to your Relayer `config.json` (adjust `path` to your wrapper location or to the provided example file if you copied it, e.g., `examples/x402-facilitator/handler.ts`):
