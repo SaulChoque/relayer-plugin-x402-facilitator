@@ -8,7 +8,7 @@ OpenZeppelin Relayer plugin that implements the x402 facilitator API so you can 
 
 ## What you get
 
-- x402 facilitator API implemented as a Relayer plugin (Stellar and EVM `exact` scheme)
+- x402 facilitator API implemented as a Relayer plugin (Stellar, EVM and Solana `exact` scheme)
 - Uses your Relayer accounts/signers to verify and settle payments
 - Supports multiple networks via config, including allowed assets per network
 - Optional channel service integration for Stellar throughput
@@ -81,9 +81,9 @@ export { handler } from "@rodacio/relayer-plugin-x402-facilitator";
 Each object in `config.networks`:
 
 - `network`: x402 network identifier (e.g., `stellar:testnet`)
-- `type`: `"stellar"` or `"evm"`
+- `type`: `"stellar"`, `"evm"` or `"solana"`
 - `relayer_id`: ID of the Relayer account to use for this network
-- `assets`: list of allowed assets (token contract addresses: `C...` for Stellar, `0x...` EIP-3009 tokens for EVM)
+- `assets`: list of allowed assets (token contract addresses: `C...` for Stellar, `0x...` EIP-3009 tokens for EVM, SPL / Token-2022 mint addresses for Solana)
 - `channel_service_api_url` / `channel_service_api_key` (optional): enable channel service acceleration for Stellar
 - `channel_service_fund_relayer_address` (optional): on-chain signer address of the channel service fund relayer, used in `/supported` response and security checks
 - `evm_speed` (optional, EVM only): relayer speed for settlement transactions: `fastest`, `fast` (default), `average` or `safeLow`
@@ -166,6 +166,40 @@ Payment requirements must carry the token's EIP-712 domain in `extra` (x402 EVM 
 Not supported yet: the Permit2 and ERC-7710 asset transfer methods.
 
 To run an end-to-end check against a running Relayer (e.g. a local anvil node with an EIP-3009 token), use `scripts/e2e-evm.ts`; see the header of that file for arguments.
+
+## Solana networks (x402 `exact` scheme, SVM)
+
+The client partially signs an SPL Token or Token-2022 `TransferChecked` transaction whose fee payer is the relayer. The plugin verifies it, the relayer adds its fee payer signature, and the plugin submits it. The payer needs no SOL.
+
+| Cluster                | `network`                                     | Relayer network name | USDC mint                                      |
+| ---------------------- | --------------------------------------------- | -------------------- | ---------------------------------------------- |
+| Mainnet Beta           | `solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp`     | `mainnet-beta`       | `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` |
+| Devnet                 | `solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1`     | `devnet`             | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
+| Custom (e.g. localnet) | `solana:<first 32 chars of the genesis hash>` | your custom network  | your mint                                      |
+
+```json
+{
+  "network": "solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1",
+  "type": "solana",
+  "relayer_id": "solana-devnet-relayer",
+  "assets": ["4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"]
+}
+```
+
+Relayer requirements:
+
+- The Solana relayer must sponsor fees: set `"policies": { "fee_payment_strategy": "relayer" }` (the Relayer default is `user`, which expects a token fee payment to the relayer that x402 transactions never include).
+- Official x402 clients (`@x402/svm`) send **v0 (versioned) transactions**. Signing them requires an OpenZeppelin Relayer that supports versioned Solana transactions; released versions up to 1.8.0 only sign legacy transactions (see the note below). Legacy transactions work with any version.
+
+`/supported` returns `extra.feePayer` (the relayer address) for Solana kinds; x402 servers pass it to clients so they can build the transaction.
+
+**Verify** follows the x402 SVM rules: CAIP-2 network and allowed mint; relayer is a Solana relayer with relayer-paid fees on the same cluster (`getGenesisHash`, or the network name on relayers that cannot return it); `extra.feePayer` is the relayer and the transaction fee payer; no address lookup tables; 3 to 6 instructions: ComputeUnitLimit, ComputeUnitPrice (at most 5 lamports per compute unit), TransferChecked, then only Lighthouse or Memo instructions; mint, destination (associated token account of `payTo`) and exact amount; the fee payer is not the transfer authority or source and is not referenced by any instruction; `extra.memo`, when set, matches the single Memo instruction; every signer except the fee payer has a valid signature; and the transaction simulates successfully through the relayer RPC.
+
+**Settle** re-runs verify, rejects duplicate settlements of the same transaction for 120 seconds (shared plugin KV store, safe across plugin workers), asks the relayer to sign as fee payer, checks the relayer did not change the message or the client signatures, sends it through the relayer RPC and waits for `confirmed`. A transaction that already landed is also rejected by the simulation (`AlreadyProcessed`).
+
+> **Relayer versions.** OpenZeppelin Relayer up to 1.8.0 (a) signs only legacy Solana transactions and (b) fails to serialize raw RPC results that are not JSON objects (e.g. `sendTransaction`, `getGenesisHash`). The plugin works around (b). Supporting v0 transactions from official x402 clients needs a relayer with versioned transaction signing.
+
+To run an end-to-end check with the official x402 client against a running Relayer, use `scripts/e2e-solana.ts`; see the header of that file for arguments.
 
 ## Using with x402 packages (e.g., x402-express)
 

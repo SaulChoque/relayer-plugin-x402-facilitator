@@ -10,7 +10,11 @@
  * - POST /api/v1/plugins/{plugin_id}/call/supported   -> Supported endpoint (route = "/supported", GET also works with allow_get_invocation)
  */
 
-import { PluginAPI, PluginError } from "@openzeppelin/relayer-sdk";
+import {
+  PluginAPI,
+  PluginError,
+  PluginKVStore,
+} from "@openzeppelin/relayer-sdk";
 import type {
   NetworkConfig,
   PluginContext,
@@ -26,12 +30,16 @@ import {
   verify as handleVerifyStellar,
 } from "./stellar";
 import { settle as handleSettleEvm, verify as handleVerifyEvm } from "./evm";
+import {
+  settle as handleSettleSolana,
+  verify as handleVerifySolana,
+} from "./solana";
 
 import { getNetworkConfigByNetwork } from "./utils";
 import { validateVerifyRequest, validateSettleRequest } from "./validation";
 
 export async function handler(context: PluginContext) {
-  const { route, params, api, config } = context;
+  const { route, params, api, config, kv } = context;
 
   if (!config) {
     throw new Error("X402 plugin config not found");
@@ -49,7 +57,7 @@ export async function handler(context: PluginContext) {
       return handleVerify(params, api, x402PluginConfig);
 
     case "/settle":
-      return handleSettle(params, api, x402PluginConfig);
+      return handleSettle(params, api, x402PluginConfig, kv);
 
     case "/supported":
       return handleSupported(api, x402PluginConfig);
@@ -104,6 +112,8 @@ async function handleVerify(
       return handleVerifyStellar(params, api, networkConfig);
     case "evm":
       return handleVerifyEvm(params, api, networkConfig);
+    case "solana":
+      return handleVerifySolana(params, api, networkConfig);
     default:
       return { isValid: false, invalidReason: "unsupported_network" };
   }
@@ -116,6 +126,7 @@ async function handleSettle(
   params: SettleRequest,
   api: PluginAPI,
   config: X402PluginConfig,
+  kv?: PluginKVStore,
 ): Promise<SettleResponse> {
   if (!validateSettleRequest(params)) {
     return {
@@ -144,6 +155,8 @@ async function handleSettle(
       return handleSettleStellar(params, api, networkConfig);
     case "evm":
       return handleSettleEvm(params, api, networkConfig);
+    case "solana":
+      return handleSettleSolana(params, api, networkConfig, kv);
     default:
       return {
         success: false,
@@ -181,12 +194,15 @@ async function handleSupported(
         }
       }
 
-      // Stellar advertises fee sponsorship; EVM (EIP-3009) is always
+      // Stellar advertises fee sponsorship; Solana clients need the fee payer
+      // (the relayer) to build their transaction; EVM (EIP-3009) is always
       // facilitator-paid and needs no extra fields in the supported kind.
-      const extra =
-        networkConfig.type === "stellar"
-          ? { areFeesSponsored: true }
-          : undefined;
+      let extra: Record<string, unknown> | undefined;
+      if (networkConfig.type === "stellar") {
+        extra = { areFeesSponsored: true };
+      } else if (networkConfig.type === "solana" && relayerAddress) {
+        extra = { feePayer: relayerAddress };
+      }
 
       return {
         networkConfig,
